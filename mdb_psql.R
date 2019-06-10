@@ -193,19 +193,46 @@ enroll <- rbind(bircs %>% select(-vid), lunas)
 visit_enroll <- bircs %>% select(eid, vid)
 
 ## Notes
-# TODO:
-# notes from tVisitlog can be assocated with visitid
-# notes from tSubject have no date?
+subj_notes <- subj %>%
+   left_join(p, by=c("LunaID"="ID")) %>%
+   select(pid, Dropped, Notes) %>%
+   mutate(ndate=ymd_hms(NA), vid=NA)
+visit_notes <-
+   vlog %>% select(vid=VisitID, Dropped, Notes) %>%
+   left_join(visit, by="vid") %>%
+   select(pid, vid, ndate=vtimestamp, Dropped, Notes)
+
+# combine
+notes_and_dropped <- rbind( subj_notes, visit_notes ) %>%
+   filter(Notes!="" | Dropped != 0) %>%
+   mutate(nid=1:n())
+
+# extract needed tables
+notes <- notes_and_dropped %>% select(nid, pid, ndate, note=Notes)
+person_note <- notes_and_dropped %>% filter(is.na(vid)) %>% select(pid, nid)
+visit_note <- notes_and_dropped %>% filter(!is.na(vid))  %>% select(vid, nid)
+
 
 ## Drops
-# TODO: figure out visit vs subject drop
+dropped_vid <-
+   notes_and_dropped %>% filter(Dropped==1) %>%
+   mutate(dropcode=ifelse(is.na(vid), "OLDDBSUBJ", "OLDDBVISIT"),
+          did=1:n())
+dropped <-  dropped_vid %>% select(did, pid, dropcode)
+# TODO: visit_drop, drop_note
 
 ## Tasks
 # TODO: everything
 tasks <- dbtbl("tTasks")
 
+## Studies
+# TODO: everything
+
 
 ## all done add to db
 list(person=p, contact=contacts, visit=visit,
-     visit_study=visit_study, visit_measures=visit_measures,
-     enroll=enroll, visit_enroll=visit_enroll)
+     visit_study=visit_study, visit_tasks=visit_measures,
+     enroll=enroll, visit_enroll=visit_enroll,
+     note=notes, person_note=person_note, visit_note=visit_note,
+     dropped=dropped,
+)
