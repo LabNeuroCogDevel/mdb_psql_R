@@ -9,16 +9,16 @@
 # sqlTables(con, tableType = "TABLE")$TABLE_NAME
 
 library(Hmisc) # mdb.get
-library(dplyr)
 library(lubridate)
 library(tidyr)
-library(LNCDR) # for col_ungroup
+# library(LNCDR) # LNCDR::col_ungroup for contact
 library(jsonlite)
 library(reshape2)
 library(stringr)
+library(dplyr)
 
 # install mdbtools, use Hmisc::mdb.get 
-db <- "/Volumes/L/bea_res/Database/LunaDB.mdb"
+db <- "LunaDB.mdb"
 dbtbl <-function( tble)  mdb.get(db, tble)
 tables <- mdb.get(db, tables=TRUE)
 
@@ -58,11 +58,15 @@ p <- allp %>%
 
 contacts <- allp %>%
    select(pid, matches("Contact.*")) %>%
-   col_ungroup("^Contact[0-9]", "relation") %>%
+   LNCDR::col_ungroup("^Contact[0-9]", "relation") %>%
    unite("who", FirstName, LastName, sep=" ") %>%
    unite("Address", Address1, Address2, City, State, ZipCode, sep=" ") %>%
    gather("ctype", "cvalue", -pid, -who, -relation) %>%
-   filter(cvalue!="", !grepl("^[-() ,PA]*$", cvalue))
+   mutate(cvalue = cvalue %>%
+                  gsub("(^| )NA( |$)", " ", .) %>%
+                  gsub(" +", " ", .) %>% 
+                  gsub("^ ?PA ?$", "", .)) %>%
+   filter(!grepl("^[-() ,]*$", cvalue))
 
 ## Visits
 
@@ -141,8 +145,6 @@ visit_study <-
    select(vid=VisitID, study=variable) %>%
    left_join(cohort %>% select(vid, cohort), by="vid")
 
-## visit action
-# TODO: add from vlog
 
 ## Tasks
 task_tables <- grep("^d", tables, value=T)
@@ -210,7 +212,7 @@ notes_and_dropped <- rbind( subj_notes, visit_notes ) %>%
 # extract needed tables
 notes <- notes_and_dropped %>% select(nid, pid, ndate, note=Notes)
 person_note <- notes_and_dropped %>% filter(is.na(vid)) %>% select(pid, nid)
-visit_note <- notes_and_dropped %>% filter(!is.na(vid))  %>% select(vid, nid)
+visit_note <- notes_and_dropped %>% filter(!is.na(vid)) %>% select(vid, nid)
 
 
 ## Drops
@@ -221,18 +223,60 @@ dropped_vid <-
 dropped <-  dropped_vid %>% select(did, pid, dropcode)
 # TODO: visit_drop, drop_note
 
-## Tasks
-# TODO: everything
+## Tasks: task, measures, files, modes
 tasks <- dbtbl("tTasks")
 
-## Studies
-# TODO: everything
+# task and "modes"
+task_modes <- tasks %>%
+ select(task=Task, Behavioral, Scan, MEG, Questionnaire) %>% 
+ melt(id.var='task') %>%
+ filter(value == 1) %>%
+ group_by(task) %>%
+ summarise(modes = toJSON(variable)) %>%
+ mutate(task = as.character(task))
 
+# task_tables already defined for visit_tasks
+# but we could get from tasks table like:
+# task_tables <- tasks$TableName %>% as.character %>% .[.!=""]
+
+# this is probably redudent with visit_task creation
+# slow. why to just get schema instead of all data?
+task_measure_lists <- lapply(task_tables, function(x) dbtbl(x) %>% names )
+task_measurements <-
+   data.frame(task=gsub("^d", "", task_tables),
+              measures=sapply(task_measure_lists,
+                        function(x) x %>% 
+                         grep("VisitID|LunaID|VisitDate", ., value=T, invert=T) %>%
+                         toJSON)
+              ) %>% mutate_all(as.character)
+
+task <- left_join(task_modes, task_measurements, by="task")
+
+# TODO: files
+
+# associate tasks with studies
+study_task <- tasks %>%
+ select(task=Task, Cannabis, MEGEmo, CogR01, RewardR01, EBS, PVL, SlotReward, RingReward) %>%
+ melt(id.var='task') %>%
+ filter(value == 1) %>%
+ select(study=variable, task)
+
+
+
+
+## Studies
+study <- data.frame(study=unique(study_task$study)) %>%
+  mutate(grantname=study)
+
+
+## visit action
+# TODO: add from vlog
 
 ## all done add to db
 list(person=p, contact=contacts, visit=visit,
      visit_study=visit_study, visit_tasks=visit_measures,
      enroll=enroll, visit_enroll=visit_enroll,
      note=notes, person_note=person_note, visit_note=visit_note,
-     dropped=dropped,
+     dropped=dropped, study_task=study_task,
+     task=task, study=study,
 )
