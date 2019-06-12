@@ -1,4 +1,4 @@
-
+#!/usr/bin/env Rscript
 # in 2010 RODBC didnt work iwth mdbtools
 # https://stat.ethz.ch/pipermail/r-help/2010-April/236983.html
 # install unixodbc{,-dev} odbc-mdbtools
@@ -117,6 +117,8 @@ visit <-
    left_join(conf_tp %>% select(-Notes), by="vid") %>%
    mutate(vstatus="checkedin")
 
+# TODO: remove vstatus and age? use visit_summary view instead?
+
 ## Study
 vt <- dbtbl("tVisitStudies")
 
@@ -220,8 +222,15 @@ dropped_vid <-
    notes_and_dropped %>% filter(Dropped==1) %>%
    mutate(dropcode=ifelse(is.na(vid), "OLDDBSUBJ", "OLDDBVISIT"),
           did=1:n())
+
+# dropped main table
 dropped <-  dropped_vid %>% select(did, pid, dropcode)
-# TODO: visit_drop, drop_note
+
+# join tables
+drop_note  <- dropped_vid %>% select(nid,did)
+drop_visit <- dropped_vid %>% select(vid,did)
+
+
 
 ## Tasks: task, measures, files, modes
 tasks <- dbtbl("tTasks")
@@ -270,7 +279,19 @@ study <- data.frame(study=unique(study_task$study)) %>%
 
 
 ## visit action
-# TODO: add from vlog
+# aid vid action ra vatimestamp
+visit_action <- 
+ vlog %>%
+ select(vid=VisitID, sched=ScheduledBy, checkedin=CheckedInBy) %>%
+ mutate_all(as.character) %>%
+ # if no one checked it in, say it was checked in
+ mutate(checkedin=ifelse(paste0(sched,checkedin) == "", 'OLDDB', checkedin)) %>%
+ # put each action (sched, checkedin) on it's own row, remove empty actions
+ melt(id.var='vid') %>% filter(value!="") %>%
+ # add aid and ra column (remove 1upmc-acct\)
+ mutate(aid=1:n(), ra = gsub('.*\\\\','',value)) %>% 
+ select(aid, vid,action=variable,ra)
+ 
 
 ## all done add to db
 list(person=p, contact=contacts, visit=visit,
@@ -278,5 +299,6 @@ list(person=p, contact=contacts, visit=visit,
      enroll=enroll, visit_enroll=visit_enroll,
      note=notes, person_note=person_note, visit_note=visit_note,
      dropped=dropped, study_task=study_task,
-     task=task, study=study,
+     task=task, study=study, drop_note=drop_note,
+     drop_visit=drop_visit, visit_action=visit_action
 )
