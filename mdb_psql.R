@@ -11,11 +11,11 @@
 library(Hmisc) # mdb.get
 library(lubridate)
 library(tidyr)
-# library(LNCDR) # LNCDR::col_ungroup for contact
 library(jsonlite)
 library(reshape2)
 library(stringr)
 library(dplyr)
+# library(LNCDR) # LNCDR::col_ungroup for contact
 
 # install mdbtools, use Hmisc::mdb.get 
 db <- "LunaDB.mdb"
@@ -36,27 +36,53 @@ dbdate <- function(x, nyears=2) {
 ## Person
 # all people into one table
 subj <- dbtbl("tSubjectInfo")  %>% mutate(fromtbl="subj",    ID=LunaID)
-hotl <- dbtbl("tHotline")      %>% mutate(fromtbl="hotline", ID=HotlineID)
+# remove any duplicates in hotline
+hotl <- dbtbl("tHotline")      %>% mutate(fromtbl="hotline", ID=HotlineID) %>%
+        filter(SubjectLastName!="", SubjectLastName!="",
+              !duplicated(paste(SubjectFirstName, SubjectLastName)))
+
+# combine everyone
 allp <- rbind(subj %>% select(-LunaID),
-              hotl %>% select(-HotlineID) ) %>%
+              hotl %>% select(-HotlineID)) %>%
+        filter(!duplicated(paste(ID,fromtbl))) %>%
         mutate(pid=1:n())
 
-p <- allp %>%
+p_withdups <- allp %>%
      select(pid, ID, fromtbl,
             fname=SubjectFirstName,
             lname=SubjectLastName,
             sex=SexID,
             hand=HandID,
             dob=DateOfBirth) %>%
-     mutate(dob=dbdate(dob),
+     mutate(dob=as.Date(dbdate(dob)),
             sex=cut(sex, breaks=c(-1, 0,   1,   2),
                          labels=c(   "U", "M", "F") ),
             hand=factor(as.character(hand),
                         labels=list("-1"="U", "1"="R", "2"="L", "3"="A")))
 
+# grab lunaid of duplicated
+dupidx <- duplicated(p_withdups %>% select(fname, lname, dob)) # Dups 11046 and 11063
+p_dups <- p_withdups[dupidx, ]
+p_nodups <- p_withdups[!dupidx, ]
+to_enroll <- inner_join(p_dups %>% select(-pid),
+           p_nodups %>% select(pid, fname, lname, dob, origid=ID))
+p <- rbind(p_nodups, to_enroll %>% select(-origid))
+
+replace_lookup <- p_dups %>%
+    select(duppid=pid, lname, fname, dob) %>%
+    inner_join(p_nodups %>% select(usepid=pid, lname, fname, dob)) %>%
+    select(usepid, duppid)
+
+replace_dup_pid <- function(d) {
+   d %>%
+      left_join(replace_lookup, by=c("pid"="duppid")) %>%
+      mutate(pid=ifelse(!is.na(usepid), usepid, pid)) %>%
+      select(-usepid)
+}
 ## contacts
 
 contacts <- allp %>%
+   replace_dup_pid %>%
    select(pid, matches("Contact.*")) %>%
    LNCDR::col_ungroup("^Contact[0-9]", "relation") %>%
    unite("who", FirstName, LastName, sep=" ") %>%
@@ -64,19 +90,28 @@ contacts <- allp %>%
    gather("ctype", "cvalue", -pid, -who, -relation) %>%
    mutate(cvalue = cvalue %>%
                   gsub("(^| )NA( |$)", " ", .) %>%
-                  gsub(" +", " ", .) %>% 
-                  gsub("^ ?PA ?$", "", .)) %>%
-   filter(!grepl("^[-() ,]*$", cvalue))
+                  gsub(" +", " ", .) %>%
+                  gsub("^ ?PA ?$", "", .),
+         # remove non-numbers from phone numbers
+         cvalue = ifelse(grepl("Phone", ctype),
+                         gsub("[^0-9]", "", cvalue), cvalue)
+   ) %>%
+   filter(!grepl("^[-() ,]*$", cvalue),
+          !is.na(cvalue),
+          cvalue!="",
+          !duplicated(.))
+
 
 ## Visits
 
 vlog <- dbtbl("tVisitlog") %>%
    mutate_at(vars(VisitTime, VisitDate),
-             function(x) x %>% as.character %>% mdy_hms)
+             function(x) x %>% as.character %>% mdy_hms) %>%
+   filter(VisitID!=3418) # duplicate pid + vtype + vtimestamp
 
 # pid and age
 visit_pid <- merge(vlog, p, by.x="LunaID", by.y="ID")  %>%
-   mutate(age=as.numeric(VisitDate - dob)/(365.25)) %>%
+   mutate(age=as.numeric(ymd(VisitDate) - dob) / 365.25) %>%
    select(pid, vid=VisitID, age)
 # time and date stored separately, sort of -- combine
 visit_time <-
@@ -103,24 +138,43 @@ conf_tp <- vlog %>%
           visitno =  Notes %>%
              str_extract("(^| )x[0-9]+") %>% gsub("x", "", .) %>% as.numeric,
           vscore = Notes %>%
-             str_extract("[0-9]+([.0-9]+)?(/5)?$|[0-9.]+/5") %>%
+             str_extract("([^0-9-]|^)[0-5](\\.[0-9])?(/5)?$|[0-5](\\.[0-9])?/5") %>%
              gsub("/5", "", .) %>%
              as.numeric
           ) %>%
    select(vid=VisitID, visitno, vscore, Notes)
 
-visit <-
+visit_withdups <-
    visit_time %>%
    select(vid, vtimestamp) %>%
-   left_join(vtpl,by="vid") %>%
+   left_join(vtpl, by="vid") %>%
    left_join(visit_pid, by="vid") %>%
    left_join(conf_tp %>% select(-Notes), by="vid") %>%
    mutate(vstatus="checkedin")
 
+visit <- visit %>% filter(!duplicated(paste(pid, vtype, vtimestamp)))
+
+## deal with duplicate visits
+replace_lookup_vid <-
+    visit_withdups %>%
+    filter(duplicated(paste(pid, vtype, vtimestamp))) %>%
+    select(dupvid=vid, pid, vtype, vtimestamp) %>%
+    inner_join(visit %>% select(usevid=vid, pid, vtype, vtimestamp)) %>%
+    select(usevid, dupvid)
+
+replace_dup_vid <- function(d) {
+   d %>%
+      left_join(replace_lookup_vid, by=c("vid"="dupvid")) %>%
+      ungroup %>%
+      mutate(vid=ifelse(!is.na(usevid), usevid, vid)) %>%
+      select(-usevid) %>%
+      filter(!duplicated(.))
+}
+
 # TODO: remove vstatus and age? use visit_summary view instead?
 
 ## Study
-vt <- dbtbl("tVisitStudies")
+vt <- dbtbl("tVisitStudies") %>% filter(VisitID != 3418)
 
 # get cohort to merge
 disorder_lookup <- dbtbl("tDisorders") %>% mutate(Disorder = gsub("None", "", Disorder))
@@ -142,10 +196,11 @@ cohort <- vlog %>%
 visit_study <-
    vt %>% select(-VisitDate, -LunaID) %>%
    melt(id.var="VisitID") %>%
-   filter(value==1) %>% 
+   filter(value==1) %>%
    group_by(VisitID) %>%
    select(vid=VisitID, study=variable) %>%
-   left_join(cohort %>% select(vid, cohort), by="vid")
+   left_join(cohort %>% select(vid, cohort), by="vid") %>%
+   replace_dup_vid
 
 
 ## Tasks
@@ -194,7 +249,7 @@ lunas <-
 enroll <- rbind(bircs %>% select(-vid), lunas)
 
 # bircs specific to a visit, add to join table
-visit_enroll <- bircs %>% select(eid, vid)
+visit_enroll <- bircs %>% select(eid, vid) %>% replace_dup_vid
 
 ## Notes
 subj_notes <- subj %>%
@@ -214,21 +269,24 @@ notes_and_dropped <- rbind( subj_notes, visit_notes ) %>%
 # extract needed tables
 notes <- notes_and_dropped %>% select(nid, pid, ndate, note=Notes)
 person_note <- notes_and_dropped %>% filter(is.na(vid)) %>% select(pid, nid)
-visit_note <- notes_and_dropped %>% filter(!is.na(vid)) %>% select(vid, nid)
+visit_note <-
+   notes_and_dropped %>% filter(!is.na(vid)) %>%
+   select(vid, nid) %>%
+   replace_dup_vid
 
 
 ## Drops
 dropped_vid <-
    notes_and_dropped %>% filter(Dropped==1) %>%
-   mutate(dropcode=ifelse(is.na(vid), "OLDDBSUBJ", "OLDDBVISIT"),
+   mutate(dropcode=ifelse(is.na(vid), "OLDDBDSUBJ", "OLDDBDVIST"),
           did=1:n())
 
 # dropped main table
 dropped <-  dropped_vid %>% select(did, pid, dropcode)
 
 # join tables
-drop_note  <- dropped_vid %>% select(nid,did)
-drop_visit <- dropped_vid %>% select(vid,did)
+drop_note  <- dropped_vid %>% select(nid, did)
+drop_visit <- dropped_vid %>% select(vid, did)
 
 
 
@@ -237,8 +295,8 @@ tasks <- dbtbl("tTasks")
 
 # task and "modes"
 task_modes <- tasks %>%
- select(task=Task, Behavioral, Scan, MEG, Questionnaire) %>% 
- melt(id.var='task') %>%
+ select(task=Task, Behavioral, Scan, MEG, Questionnaire) %>%
+ melt(id.var="task") %>%
  filter(value == 1) %>%
  group_by(task) %>%
  summarise(modes = toJSON(variable)) %>%
@@ -254,7 +312,7 @@ task_measure_lists <- lapply(task_tables, function(x) dbtbl(x) %>% names )
 task_measurements <-
    data.frame(task=gsub("^d", "", task_tables),
               measures=sapply(task_measure_lists,
-                        function(x) x %>% 
+                        function(x) x %>%
                          grep("VisitID|LunaID|VisitDate", ., value=T, invert=T) %>%
                          toJSON)
               ) %>% mutate_all(as.character)
@@ -265,8 +323,10 @@ task <- left_join(task_modes, task_measurements, by="task")
 
 # associate tasks with studies
 study_task <- tasks %>%
- select(task=Task, Cannabis, MEGEmo, CogR01, RewardR01, EBS, PVL, SlotReward, RingReward) %>%
- melt(id.var='task') %>%
+ select(task=Task,
+        Cannabis, MEGEmo, CogR01, RewardR01,
+        EBS, PVL, SlotReward, RingReward) %>%
+ melt(id.var="task") %>%
  filter(value == 1) %>%
  select(study=variable, task)
 
@@ -274,31 +334,49 @@ study_task <- tasks %>%
 
 
 ## Studies
-study <- data.frame(study=unique(study_task$study)) %>%
+study <- data.frame(study= c(study_task$study %>% as.character %>% unique,
+                           "SlotReward", "RingReward", "RewardR21")) %>%
   mutate(grantname=study)
 
 
 ## visit action
 # aid vid action ra vatimestamp
-visit_action <- 
+visit_action <-
  vlog %>%
  select(vid=VisitID, sched=ScheduledBy, checkedin=CheckedInBy) %>%
  mutate_all(as.character) %>%
  # if no one checked it in, say it was checked in
  mutate(checkedin=ifelse(paste0(sched,checkedin) == "", 'OLDDB', checkedin)) %>%
  # put each action (sched, checkedin) on it's own row, remove empty actions
- melt(id.var='vid') %>% filter(value!="") %>%
+ melt(id.var="vid") %>% filter(value!="") %>%
  # add aid and ra column (remove 1upmc-acct\)
- mutate(aid=1:n(), ra = gsub('.*\\\\','',value)) %>% 
- select(aid, vid,action=variable,ra)
+ mutate(aid=1:n(),
+        ra = gsub(".*\\\\", "", value),
+        vid=as.numeric(vid)) %>%
+ select(aid, vid, action=variable, ra) %>%
+ replace_dup_vid
  
 
-## all done add to db
-list(person=p, contact=contacts, visit=visit,
+## collect everything we should add to DB
+dbdfs <- list(
+     person=p %>% select(-ID, -fromtbl) %>% filter(!duplicated(pid)),
+     visit=visit %>% filter(!duplicated(paste(pid,vtimestamp,vtype))),
+     study=study,
+     task=task, contact=contacts,
      visit_study=visit_study, visit_tasks=visit_measures,
      enroll=enroll, visit_enroll=visit_enroll,
      note=notes, person_note=person_note, visit_note=visit_note,
      dropped=dropped, study_task=study_task,
-     task=task, study=study, drop_note=drop_note,
-     drop_visit=drop_visit, visit_action=visit_action
+     drop_note=drop_note, drop_visit=drop_visit, visit_action=visit_action
 )
+
+## add to databae
+
+library(DBI)
+# readRenviron(".Renviron") # db settings stored there (and in ~/.pgpass)
+con <- dbConnect(RPostgreSQL::PostgreSQL(),
+                 dbname="lncddb_r",
+                 user=Sys.getenv("pg_user"))
+for (tblname in names(dbdfs)) {
+   dbWriteTable(con, tblname, dbdfs[[tblname]], row.names=F, append=T)
+}

@@ -1,3 +1,4 @@
 *.swp
 LunaDB.mdb
 *_mkroles.sql
+.Renviron
