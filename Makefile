@@ -9,4 +9,7 @@ data: schema mdb_psql.R
 	Rscript mdb_psql.R
 
 triggers: data
-	cat sql/04_add-RAs.sql sql/05_triggers.sql | sudo -u postgres psql
+	cat sql/04_add-RAs.sql sql/05_triggers.sql sql/06_update_seq.sql | sudo -u postgres psql lncddb_r
+
+push: triggers
+	./push_to_prod.bash

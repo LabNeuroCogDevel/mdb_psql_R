@@ -1,4 +1,8 @@
 #!/usr/bin/env Rscript
+
+# run me from Makefile:
+# `make all` (file sourced with `make data` between `schema` and `triggers`)
+
 # in 2010 RODBC didnt work iwth mdbtools
 # https://stat.ethz.ch/pipermail/r-help/2010-April/236983.html
 # install unixodbc{,-dev} odbc-mdbtools
@@ -17,6 +21,8 @@ library(stringr)
 library(dplyr)
 # library(LNCDR) # LNCDR::col_ungroup for contact
 
+logit<-function(...) print(paste0("[", now(), "] ", ...))
+
 # install mdbtools, use Hmisc::mdb.get 
 db <- "LunaDB.mdb"
 dbtbl <-function( tble)  mdb.get(db, tble)
@@ -33,6 +39,7 @@ dbdate <- function(x, nyears=2) {
 # df with cols: Conact1Email Contact2Email Contact1Address Contact2Address
 # to df like: ContactNum, Email, Address
 
+logit("reading in all people and visits")
 ## Person
 # all people into one table
 subj <- dbtbl("tSubjectInfo")  %>% mutate(fromtbl="subj",    ID=LunaID)
@@ -152,7 +159,7 @@ visit_withdups <-
    left_join(conf_tp %>% select(-Notes), by="vid") %>%
    mutate(vstatus="checkedin")
 
-visit <- visit %>% filter(!duplicated(paste(pid, vtype, vtimestamp)))
+visit <- visit_withdups %>% filter(!duplicated(paste(pid, vtype, vtimestamp)))
 
 ## deal with duplicate visits
 replace_lookup_vid <-
@@ -204,6 +211,7 @@ visit_study <-
 
 
 ## Tasks
+logit("identifying all tasks")
 task_tables <- grep("^d", tables, value=T)
 col2json <- function(d) {
    if (nrow(d) < 1) return(measures=list())
@@ -218,13 +226,21 @@ mkmeasure <- function(d)  d %>%
             col2json %>%
             unlist)
 
+logit("reading in all measures for all visits (big db read)")
 all_measures <- lapply(task_tables, dbtbl)
-visit_measures <-
-   lapply(task_tables, function(tn) dbtbl(tn) %>%
-                            mkmeasure %>% mutate(task=gsub("^d", "", tn))) %>%
-   bind_rows
+
+logit("all visits to json")
+visit_task_list <-
+   mapply(function(tb, dn) mkmeasure(tb) %>% mutate(task=gsub("^d", "", dn)),
+         tb=all_measures, dn=task_tables)
+logit("making visit_task (large bind_rows)")
+visit_task <-
+   visit_task_list %>%
+   bind_rows %>%
+   replace_dup_vid
 
 ## Enroll
+logit("setting up enrollment, notes, and drops")
 bircs <- dbtbl("tBIRCIDS") %>%
    rename(vid=VisitID, id=BIRCID, ID=LunaID) %>%
    left_join(p %>% select(ID, pid), by="ID") %>%
@@ -258,6 +274,7 @@ subj_notes <- subj %>%
    mutate(ndate=ymd_hms(NA), vid=NA)
 visit_notes <-
    vlog %>% select(vid=VisitID, Dropped, Notes) %>%
+   replace_dup_vid %>%
    left_join(visit, by="vid") %>%
    select(pid, vid, ndate=vtimestamp, Dropped, Notes)
 
@@ -308,7 +325,10 @@ task_modes <- tasks %>%
 
 # this is probably redudent with visit_task creation
 # slow. why to just get schema instead of all data?
-task_measure_lists <- lapply(task_tables, function(x) dbtbl(x) %>% names )
+
+logit("building list of all tasks")
+#task_measure_lists <- lapply(task_tables, function(x) dbtbl(x) %>% names )
+task_measure_lists <- lapply(all_measures, names)
 task_measurements <-
    data.frame(task=gsub("^d", "", task_tables),
               measures=sapply(task_measure_lists,
@@ -321,6 +341,7 @@ task <- left_join(task_modes, task_measurements, by="task")
 
 # TODO: files
 
+logit("assocating with studies and actions")
 # associate tasks with studies
 study_task <- tasks %>%
  select(task=Task,
@@ -357,13 +378,21 @@ visit_action <-
  replace_dup_vid
  
 
+missing_tasks <-
+   visit_task %>% select(tk=task) %>%
+   group_by(tk) %>% tally %>%
+   filter( ! tk  %in% task$task) %>%
+   mutate(task=tk, modes="[]", measures="[]") %>%
+   select(task, modes, measures)
+
+
+logit("adding to db")
 ## collect everything we should add to DB
 dbdfs <- list(
      person=p %>% select(-ID, -fromtbl) %>% filter(!duplicated(pid)),
-     visit=visit %>% filter(!duplicated(paste(pid,vtimestamp,vtype))),
-     study=study,
-     task=task, contact=contacts,
-     visit_study=visit_study, visit_tasks=visit_measures,
+     visit=visit, study=study,
+     task=rbind(task, missing_tasks), contact=contacts,
+     visit_study=visit_study, visit_task=visit_task,
      enroll=enroll, visit_enroll=visit_enroll,
      note=notes, person_note=person_note, visit_note=visit_note,
      dropped=dropped, study_task=study_task,
@@ -371,6 +400,7 @@ dbdfs <- list(
 )
 
 ## add to databae
+# run `make schema` before running this
 
 library(DBI)
 # readRenviron(".Renviron") # db settings stored there (and in ~/.pgpass)
