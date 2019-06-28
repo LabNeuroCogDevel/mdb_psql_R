@@ -279,32 +279,14 @@ visit_notes <-
    select(pid, vid, ndate=vtimestamp, Dropped, Notes)
 
 # combine
-notes_and_dropped <- rbind( subj_notes, visit_notes ) %>%
+# 20190628
+# note: pid vid dropcode RA nstamp note
+note <- rbind( subj_notes, visit_notes ) %>%
    filter(Notes!="" | Dropped != 0) %>%
-   mutate(nid=1:n())
-
-# extract needed tables
-notes <- notes_and_dropped %>% select(nid, pid, ndate, note=Notes)
-person_note <- notes_and_dropped %>% filter(is.na(vid)) %>% select(pid, nid)
-visit_note <-
-   notes_and_dropped %>% filter(!is.na(vid)) %>%
-   select(vid, nid) %>%
-   replace_dup_vid
-
-
-## Drops
-dropped_vid <-
-   notes_and_dropped %>% filter(Dropped==1) %>%
-   mutate(dropcode=ifelse(is.na(vid), "OLDDBDSUBJ", "OLDDBDVIST"),
-          did=1:n())
-
-# dropped main table
-dropped <-  dropped_vid %>% select(did, pid, dropcode)
-
-# join tables
-drop_note  <- dropped_vid %>% select(nid, did)
-drop_visit <- dropped_vid %>% select(vid, did)
-
+   mutate(nid=1:n()) %>%
+   mutate(dropcode=ifelse(Dropped==0, NA,
+          ifelse(is.na(vid), "OLDDBDSUBJ", "OLDDBDVIST"))) %>%
+   select(nid, pid, vid, dropcode, note=Notes)
 
 
 ## Tasks: task, measures, files, modes
@@ -340,6 +322,7 @@ task_measurements <-
 task <- left_join(task_modes, task_measurements, by="task")
 
 # TODO: files
+print("TODO: deal with files!")
 
 logit("assocating with studies and actions")
 # associate tasks with studies
@@ -394,19 +377,7 @@ dbdfs <- list(
      task=rbind(task, missing_tasks), contact=contacts,
      visit_study=visit_study, visit_task=visit_task,
      enroll=enroll, visit_enroll=visit_enroll,
-     note=notes, person_note=person_note, visit_note=visit_note,
-     dropped=dropped, study_task=study_task,
-     drop_note=drop_note, drop_visit=drop_visit, visit_action=visit_action
+     note=note, study_task=study_task, visit_action=visit_action
 )
+save(file="dbdfs.Rdata",dbdfs)
 
-## add to databae
-# run `make schema` before running this
-
-library(DBI)
-# readRenviron(".Renviron") # db settings stored there (and in ~/.pgpass)
-con <- dbConnect(RPostgreSQL::PostgreSQL(),
-                 dbname="lncddb_r",
-                 user=Sys.getenv("pg_user"))
-for (tblname in names(dbdfs)) {
-   dbWriteTable(con, tblname, dbdfs[[tblname]], row.names=F, append=T)
-}

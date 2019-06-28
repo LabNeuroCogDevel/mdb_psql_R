@@ -6,10 +6,15 @@ create table person (
    dob     date        not null,
    sex     char(1)     not null,
    hand    char(1)     not null,
+   nick    varchar(50)         ,
    addDate date                ,
    source  varchar(50)         ,
    unique(fname,lname,dob)
 );
+
+-- needed for ndar guid. get from survey
+--  mname   varchar(50)         ,
+--  birth_city varchar(50)      ,
 
 -- score a subject 
 -- responsive, performant, instructable
@@ -164,46 +169,23 @@ create table dropcode (
   droplevel droplevels not null
 );
 
--- subject/visit drop info
-create table dropped (
- did serial primary key,
- pid int references person(pid) not null,
- dropcode varchar(10) references dropcode(dropcode) not null
-);
-
-create table visit_drop (
-  vid   int references visit(vid) not null,
-  did   int references dropped(did) not null
-);
 
 create table note (
  nid serial primary key,
  pid int references person(pid) not null,
+ vid int references visit(vid),
+ dropcode varchar(10) references dropcode(dropcode),
  ra    varchar(50), -- not null,
  ndate timestamp, -- not null,
- dropnote bool  default false not null,
- note  text
+ note  text not null
 );
 
-create table visit_note (
-  vid   int references visit(vid) not null,
-  nid   int references note(nid) not null
-);
-
-create table drop_note (
-  did   int references dropped(did) not null,
-  nid   int references note(nid) not null
-);
-
-create table person_note (
-  pid   int references person(pid) not null,
-  nid   int references note(nid) not null
-);
 
 -- contact status = ways people could have interactied
 create type cstatus as enum ('update_info','bad_info', 'realtime', 'sent_waiting', 'replied');
 -- alter type cstatus add value 'dont_use'
 create table contact_note (
+  cnid        serial primary key,
   cid         int references contact(cid) not null,
   cstatus     boolean default false not null, 
   ctimestamp  timestamp,
