@@ -28,11 +28,9 @@ create table contact (
    relation varchar(50),
    who      varchar(50),
    added    timestamp,
-   nogood   boolean default false not null,  -- 1 if doesnt work
-   note     text,    --- e.g. call between 9-5
+   -- note       text,    --- e.g. call between 9-5
    unique (who,ctype,cvalue,relation,pid) -- use pid b/c same person might be 2 contacts
 );
-
 -- use contact_note -> note for contacted
 
 
@@ -202,9 +200,14 @@ create table person_note (
   nid   int references note(nid) not null
 );
 
+-- contact status = ways people could have interactied
+create type cstatus as enum ('update_info','bad_info', 'realtime', 'sent_waiting', 'replied');
+-- alter type cstatus add value 'dont_use'
 create table contact_note (
-  cid   int references contact(cid) not null,
-  nid   int references note(nid) not null
+  cid         int references contact(cid) not null,
+  cstatus     boolean default false not null, 
+  ctimestamp  timestamp,
+  detail      text
 );
 
 -- some IDs are unique to a visit (e.g. BIRC)

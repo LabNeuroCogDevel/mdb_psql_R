@@ -211,7 +211,7 @@ create view visit_person_view as
  select 
    v.*, p.fname, p.lname,p.dob,p.hand,p.sex,
    json_agg(distinct (select row_to_json(_) from (select e.id,e.etype) as _)::jsonb ) as ids,
-   json_agg(distinct (select row_to_json(_) from (select s.cohort,s.study) as _)::jsonb ) as studys,
+   json_agg(distinct (select row_to_json(_) from (select s.cohort,s.study) as _)::jsonb ) as studies,
    json_agg(distinct n.note)   as notes
   from visit v
    join person p  on p.pid = v.pid
@@ -270,7 +270,7 @@ create view visit_checkin_view as
  select 
   v.vid::integer,
   json_agg(distinct (select row_to_json(_) from (select e.id,e.etype) as _)::jsonb )::jsonb as ids,
-  json_agg(distinct (select row_to_json(_) from (select s.cohort,s.study) as _)::jsonb ) as studys,
+  json_agg(distinct (select row_to_json(_) from (select s.cohort,s.study) as _)::jsonb ) as studies,
   vscore,
   max(va.ra) as ra, -- exect only sched, so no other RAs, use max to make sure we only get one
   array_agg(distinct n.note)::text as note,
