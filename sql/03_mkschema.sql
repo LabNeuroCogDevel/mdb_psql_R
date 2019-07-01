@@ -187,7 +187,7 @@ create type cstatus as enum ('update_info','bad_info', 'realtime', 'sent_waiting
 create table contact_note (
   cnid        serial primary key,
   cid         int references contact(cid) not null,
-  cstatus     boolean default false not null, 
+  cstatus     cstatus, 
   ctimestamp  timestamp,
   detail      text
 );
