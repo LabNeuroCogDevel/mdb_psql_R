@@ -13,7 +13,7 @@ set -euo pipefail
 
 
 [ $# -ne 2 ] && echo "give me a host and database: $0 arnold lncddb" && exit 1
-remote_host="$1"
+remote_host="$1"; shift
 remote_db="$1"
 
 set -x
@@ -23,4 +23,4 @@ WHERE pg_stat_activity.datname = '$remote_db'
   AND pid <> pg_backend_pid();
 drop database if exists $remote_db;create database $remote_db;" | psql -U postgres -h $remote_host
 pg_dump -U postgres lncddb_r | psql -U postgres -h $remote_host $remote_db 
-cat sql/06_update_seq.sql sql/04_add-RAs.sql | psql -U postgres -h $remote_host $remote_db
+cat sql/06_update_seq.sql sql/04_add-RAs.sql sql/07_update_roles.sql | psql -U postgres -h $remote_host $remote_db

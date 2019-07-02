@@ -214,3 +214,49 @@ select
    left join note d      on d.pid=p.pid and d.dropcode is not null
    left join dropcode dc    on dc.dropcode = d.dropcode
  group by p.pid;
+
+
+
+-- how to insert into visit_summary
+
+create or replace function insert_new_visit_ra() 
+ returns trigger
+ LANGUAGE plpgsql 
+as $$
+BEGIN
+ NEW.vid := nextval('visit_vid_seq'); -- visit table, vid column, serial primary key sequence generated
+ NEW.age := (select date_part('day',(NEW.vtimestamp-dob))/365.25 as age from person where pid = NEW.pid);
+ -- --- add visit --- --
+ -- another trigger will  set visit's vstatus when adding the action below
+ INSERT into visit (pid,vid,vtype,vscore,age,vtimestamp,visitno,googleuri,dur_hr) values
+    (new.pid,new.vid,new.vtype,new.vscore,new.age,new.vtimestamp,new.visitno,new.googleuri,new.dur_hr);
+
+ -- --- add action --- --
+ -- if we dont specify an action we are schedualing, and use the now time
+ if new.action is null then
+  INSERT into visit_action (action,ra,vatimestamp,vid) values ('sched',NEW.ra,now(), NEW.vid);
+ -- otherwise we are adding something that already happened
+ -- use the date provided in vtimestamp and the action specified
+ -- probably only useful for action == 'complete'
+ else
+  INSERT into visit_action (action,ra,vatimestamp,vid) values (new.action,NEW.ra,new.vtimestamp, NEW.vid);
+ end if;
+
+ -- --- add note --- --
+ if new.notes is not null then
+   insert into note (vid, note, ra, ntimestamp) values (NEW.vid,NEW.note,NEW.ra, now());
+ end if;
+
+ -- --- add study --- --
+ if new.study is not null then
+   INSERT into visit_study (vid,study,cohort) values (NEW.vid,NEW.study,NEW.cohort);
+ end if;
+
+ RETURN NEW;
+END;
+$$;
+
+create trigger update_visit_status instead of insert on visit_summary
+for each row
+execute procedure insert_new_visit_ra();
+
