@@ -59,8 +59,9 @@ create view person_only_notes as
     pid,
     max(ndate) as lastnstamp,
     json_agg(distinct note)  as notes,
-    max(dropcode) as maxpdrop
+    max(droplevel) as maxpdrop
   from note
+  natural join dropcode
   where vid is null
   group by pid;
 
@@ -71,8 +72,9 @@ create view person_all_notes as
     pid,
     max(ndate) as lastnstamp,
     json_agg(distinct note)  as notes,
-    max(dropcode) as maxdrop
+    max(droplevel) as maxdrop
   from note
+  natural join dropcode
   group by pid;
 
 
@@ -137,7 +139,7 @@ BEGIN
 
  delete from visit_action where vid = OLD.vid; 
  delete from visit_study  where vid = OLD.vid; 
- delete from note using visit_note where visit_note.nid = note.nid and visit_note.vid = OLD.vid ;
+ delete from note where note.vid = OLD.vid;
  RETURN OLD;
 
 END;
@@ -218,10 +220,9 @@ select
 
 
 -- how to insert into visit_summary
-
-create or replace function insert_new_visit_ra() 
+create or replace function insert_new_visit_ra()
  returns trigger
- LANGUAGE plpgsql 
+ LANGUAGE plpgsql
 as $$
 BEGIN
  NEW.vid := nextval('visit_vid_seq'); -- visit table, vid column, serial primary key sequence generated
@@ -243,8 +244,10 @@ BEGIN
  end if;
 
  -- --- add note --- --
+ -- value#>'{}' removes quotes from json_array_elements
  if new.notes is not null then
-   insert into note (vid, note, ra, ntimestamp) values (NEW.vid,NEW.note,NEW.ra, now());
+   insert into note (note, pid,vid, ra, ndate)
+    select value#>>'{}' as note, new.pid, new.vid, new.ra, now() as ndate from json_array_elements(new.notes);
  end if;
 
  -- --- add study --- --
@@ -259,4 +262,3 @@ $$;
 create trigger update_visit_status instead of insert on visit_summary
 for each row
 execute procedure insert_new_visit_ra();
-

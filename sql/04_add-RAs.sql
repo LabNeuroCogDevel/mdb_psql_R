@@ -31,8 +31,8 @@ grant all privileges on all functions in schema public to rockcasn;
 grant all privileges on all sequences in schema public to rockcasn;
 
 
-insert into ra (ra) values ('foranw');
-insert into ra (ra) values ('fedorjm2');
-insert into ra (ra) values ('thompsonl12');
-insert into ra (ra) values ('missarm');
-insert into ra (ra) values ('rockcasn');
+insert into ra (ra, abbr) values ('foranw', 'WF');
+insert into ra (ra, abbr) values ('fedorjm2', 'JF');
+insert into ra (ra, abbr) values ('thompsonl12', 'LT');
+insert into ra (ra, abbr) values ('missarm', 'MM');
+insert into ra (ra, abbr) values ('rockcasn', 'NR');
