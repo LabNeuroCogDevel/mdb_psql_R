@@ -65,7 +65,7 @@ create table family (
 
 
 -- onto visits --------------------------
-create type status as enum ('sched','assigned', 'complete','checkedin','cancelled','noshow','unknown','other');
+create type status as enum ('sched','resched', 'assigned', 'complete','checkedin','cancelled','noshow','unknown','other');
 create table visit (
    vid     serial primary key  ,
    pid     int references person(pid) not null,

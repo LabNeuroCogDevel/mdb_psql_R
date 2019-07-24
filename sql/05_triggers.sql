@@ -158,7 +158,7 @@ create view  visits_view as
  select
     max( (select e.id from (select e.id) as _  where e.etype like 'LunaID')) as lunaid,
     to_char(vtimestamp,'YYYYmmdd') as ymd,
-    max(dropcode.droplevel) as subjmaxdrop,
+    max(an.maxdrop) as subjmaxdrop,
    p.fname,p.lname,p.sex,p.dob,v.*,
   json_agg(distinct vn.maxvdrop) as visit_dropped,
   json_agg( distinct (select row_to_json(_) from (select vs.study, vs.cohort) as _)::jsonb ) as studies,
@@ -173,7 +173,6 @@ create view  visits_view as
    natural left join visit_action va
    left join visit_notes vn on vn.vid = v.vid
    left join person_all_notes an on an.pid = v.vid
-   left join dropcode on an.maxdrop = dropcode.dropcode
   group by p.pid,v.vid;
  
 
@@ -220,7 +219,7 @@ select
 
 
 -- how to insert into visit_summary
-create or replace function insert_new_visit_ra()
+create or replace function insert_visit_summary()
  returns trigger
  LANGUAGE plpgsql
 as $$
@@ -259,6 +258,68 @@ BEGIN
 END;
 $$;
 
-create trigger update_visit_status instead of insert on visit_summary
+create trigger update_visit_status_trigger instead of insert on visit_summary
 for each row
-execute procedure insert_new_visit_ra();
+execute procedure insert_visit_summary();
+
+
+-- how to update row of visit_summary
+create or replace function update_visit_summary()
+ returns trigger
+ LANGUAGE plpgsql
+as $$
+BEGIN
+   -- do not change visit ids, silently ignore instead of erroring
+   -- if NEW.vid is not null or NEW.pid is not null then
+   --    raise exception 'cannot change row ids using visit_summary';
+   -- end if;
+
+   -- update only if not checked in/compelted
+   if OLD.action not in ('sched'::status, 'resched'::status,  'assigned'::status) then
+      raise exception 'cannot reschedule if status is not (re)sched or assigned';
+   end if;
+
+   -- use what we have if we didn't specify
+   if new.vtimestamp is null then new.vtimestamp = old.vtimestamp; end if;
+   if new.vtype is null then new.vtype = old.vtype; end if;
+   if new.vscore is null then new.vscore = old.vscore; end if;
+   if new.visitno is null then new.visitno = old.visitno; end if;
+   if new.googleuri is null then new.googleuri = old.googleuri; end if;
+   if new.dur_hr is null then new.dur_hr = old.dur_hr; end if;
+   if new.action is null then new.action = 'resched'::status; end if;
+   if new.ra is null then new.ra = old.ra; end if;
+
+ NEW.age := (select date_part('day',(NEW.vtimestamp-dob))/365.25 as age from person where pid = old.pid);
+ -- --- add visit --- --
+ -- another trigger will  set visit's vstatus when adding the action below
+ update visit
+  set vtype = new.vtype, vscore=new.vscore,
+      age = new.age,  vtimestamp = new.vtimestamp, visitno = new.visitno,
+      googleuri=new.googleuri,dur_hr=new.dur_hr
+  where vid = old.vid;
+
+ -- --- add action --- --
+ INSERT into visit_action (action,ra,vatimestamp,vid) values (new.action,NEW.ra,new.vtimestamp, NEW.vid);
+
+ -- --- add note --- --
+ -- value#>'{}' removes quotes from json_array_elements
+ if new.notes is not null then
+   insert into note (note, pid,vid, ra, ndate)
+    select value#>>'{}' as note, old.pid, old.vid, new.ra, now() as ndate from json_array_elements(new.notes);
+ end if;
+
+ -- --- add study --- --
+ if new.study is not null then
+   update visit_study 
+      set study= new.study,  cohort = new.cohort 
+       where vid = old.vid and study = old.study;
+ end if;
+
+ RETURN NEW;
+END;
+$$;
+
+
+create trigger update_visit_summary_trigger instead of update on visit_summary
+for each row
+execute procedure update_visit_summary();

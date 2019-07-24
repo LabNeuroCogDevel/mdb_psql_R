@@ -16,7 +16,7 @@ set -euo pipefail
 remote_host="$1"; shift
 remote_db="$1"; shift
 local_db=lncddb_r
-#[ $remote_host == "arnold" ] && local_db=lncddb
+[ $remote_host == "arnold" ] && local_db=lncddb && echo "copying from local:lncddb instead of lncddb_r"
 
 set -x
 echo "SELECT pg_terminate_backend(pg_stat_activity.pid)
