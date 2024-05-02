@@ -2,6 +2,7 @@
 cd $(dirname $0)
 trap 'e=$?; [ $e -ne 0 ] && echo "$0 exited in error"' EXIT
 set -euo pipefail
+set -x
 
 #
 # 20190620WF - init
@@ -16,7 +17,16 @@ set -euo pipefail
 remote_host="$1"; shift
 remote_db="$1"; shift
 local_db=lncddb_r
-[ $remote_host == "arnold" ] && local_db=lncddb && echo "copying from local:lncddb instead of lncddb_r"
+local_db=lncddb
+if [ $remote_host == "arnold" ]; then
+   local_db=lncddb
+   remote_host=arnold.wpic.upmc.edu # set to full qualified so .pgpass saves us from interaction
+   echo "copying from local:lncddb instead of lncddb_r"
+elif [ $remote_host == "rhea" ]; then 
+   local_db=lncddb
+   remote_host=rhea.wpic.upmc.edu # set to full qualified so .pgpass saves us from interaction
+   echo "copying from local:lncddb instead of lncddb_r"
+fi
 
 set -x
 echo "SELECT pg_terminate_backend(pg_stat_activity.pid)

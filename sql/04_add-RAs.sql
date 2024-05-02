@@ -36,3 +36,16 @@ insert into ra (ra, abbr) values ('fedorjm2', 'JF');
 insert into ra (ra, abbr) values ('thompsonl12', 'LT');
 insert into ra (ra, abbr) values ('missarm', 'MM');
 insert into ra (ra, abbr) values ('rockcasn', 'NR');
+
+-- 2021-12-09
+create role famalettea with LOGIN REPLICATION password NULL;
+GRANT ALL PRIVILEGES ON DATABASE lncddb TO famalettea;
+grant all privileges on all tables in schema public to famalettea;
+grant all privileges on all functions in schema public to famalettea;
+grant all privileges on all sequences in schema public to famalettea;
+insert into ra (ra, abbr) values ('famalettea', 'AF');
+
+-- 2024-02-09addedafterfact
+create role lallovm with LOGIN REPLICATION password NULL;
+insert into ra (ra, abbr) values ('lallovm', 'VL');
+
